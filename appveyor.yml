@@ -7,7 +7,7 @@ matrix:
   fast_finish: true
 environment:
   matrix:
-  - msbuild: 1
+  - cmake_build: 1
 skip_commits:
   files:
     - '**/*.md'
