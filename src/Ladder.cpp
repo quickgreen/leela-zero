@@ -3,7 +3,7 @@
 
 #include "Ladder.h"
 #include "SearchBoard.h"
-#include "src/GTP.h"
+#include "GTP.h"
 
 using namespace std;
 

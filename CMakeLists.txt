@@ -117,17 +117,6 @@ target_link_libraries(leelaz ${ZLIB_LIBRARIES})
 target_link_libraries(leelaz ${CMAKE_THREAD_LIBS_INIT})
 install(TARGETS leelaz DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-if(Qt5Core_FOUND)
-    if(NOT Qt5Core_VERSION VERSION_LESS "5.3.0")
-        add_subdirectory(autogtp)
-        add_subdirectory(validation)
-    else()
-        message(WARNING "Qt ${Qt5Core_VERSION} is found but does not met required version 5.3.0, \
-        build target for `autogtp` and `validation` is disabled.")
-    endif()
-else()
-    message(WARNING "Qt is not found, build for `autogtp` and `validation` is disabled")
-endif()
 
 # Google Test below
 file(GLOB tests_SRC "${SrcPath}/tests/*.cpp")
