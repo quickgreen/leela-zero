@@ -40,6 +40,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <signal.h>
 
 #include "GTP.h"
 #include "GameState.h"
@@ -50,7 +51,24 @@
 #include "Utils.h"
 #include "Zobrist.h"
 
+#include "GoBoard.h"
+#include "ZobristHash.h"
+
+#define ALT_STACK_SIZE (4096*8)
+#define ALLOCA_SIZE    (1024*2)
+
 using namespace Utils;
+
+#ifndef _WIN32
+    static void signal_handler(int sig, siginfo_t* sig_info, void* sig_data) {
+    (void) sig_data;
+    if( sig == SIGSEGV ) {
+        fprintf(stderr, "SEGV: %p\n", sig_info->si_addr );
+        fflush(stderr);
+        exit(1);
+    }
+}
+#endif
 
 static void license_blurb() {
     printf(
@@ -170,6 +188,16 @@ static void parse_commandline(const int argc, const char* const argv[]) {
 #ifndef USE_CPU_ONLY
         ("cpu-only", "Use CPU-only implementation and do not use OpenCL device(s).")
 #endif
+        ("add_analyze_interval", po::value<int>()->default_value(cfg_add_interval),
+                      "Additional analyze interval(centi seconds).")
+        ("no_ladder_check", "Disable ladder check.")
+        ("ladder_defense", po::value<int>()->default_value(cfg_ladder_defense),
+                      "Ladder defense check minimum depth.")
+        ("ladder_attack", po::value<int>()->default_value(cfg_ladder_attack),
+                      "Ladder attack check minimum depth.")
+        ("ladder_depth", po::value<int>()->default_value(cfg_ladder_depth),
+                      "Ladder check maximum depth.")
+        ("use_scaling_fpu", "Scaling fpu by policy according to normal distribution.")
         ;
 #ifdef USE_OPENCL
     po::options_description gpu_desc("OpenCL device options");
@@ -207,7 +235,8 @@ static void parse_commandline(const int argc, const char* const argv[]) {
         ("logconst", po::value<float>())
         ("softmax_temp", po::value<float>())
         ("fpu_reduction", po::value<float>())
-        ("ci_alpha", po::value<float>());
+        ("ci_alpha", po::value<float>())
+        ("lcb_min_visit_ratio", po::value<float>());
 #endif
     // These won't be shown, we use them to catch incorrect usage of the
     // command line.
@@ -294,6 +323,9 @@ static void parse_commandline(const int argc, const char* const argv[]) {
     }
     if (vm.count("ci_alpha")) {
         cfg_ci_alpha = vm["ci_alpha"].as<float>();
+    }
+    if (vm.count("lcb_min_visit_ratio")) {
+        cfg_lcb_min_visit_ratio = vm["lcb_min_visit_ratio"].as<float>();
     }
 #endif
 
@@ -482,6 +514,30 @@ static void parse_commandline(const int argc, const char* const argv[]) {
     // the best if we have introduced noise there exactly to explore more.
     cfg_fpu_root_reduction = cfg_noise ? 0.0f : cfg_fpu_reduction;
 
+    if (vm.count("add_analyze_interval")) {
+        cfg_add_interval = vm["add_analyze_interval"].as<int>();
+    }
+
+    if (vm.count("no_ladder_check")) {
+        cfg_ladder_check = false;
+    }
+
+    if (vm.count("ladder_defense")) {
+        cfg_ladder_defense = vm["ladder_defense"].as<int>();
+    }
+
+    if (vm.count("ladder_attack")) {
+        cfg_ladder_attack = vm["ladder_attack"].as<int>();
+    }
+
+    if (vm.count("ladder_depth")) {
+        cfg_ladder_depth = vm["ladder_depth"].as<int>();
+    }
+
+    if (vm.count("use_scaling_fpu")) {
+        cfg_scaling_fpu = true;
+    }
+
     auto out = std::stringstream{};
     for (auto i = 1; i < argc; i++) {
         out << " " << argv[i];
@@ -530,6 +586,30 @@ void benchmark(GameState& game) {
 }
 
 int main(int argc, char* argv[]) {
+#ifndef _WIN32
+    stack_t ss;
+    ss.ss_sp    = malloc(ALT_STACK_SIZE);
+    ss.ss_size  = ALT_STACK_SIZE;
+    ss.ss_flags = 0;
+    if ( sigaltstack(&ss, NULL)) {
+        fprintf(stderr, "Failed sigaltstack\n" );
+        exit(1);
+    }
+    struct sigaction newAct, oldAct;
+    if ( sigaction( SIGSEGV, NULL, &oldAct ) == -1 ) {
+        fprintf(stderr, "Failed to acquire the current sigaction_t.\n" );
+        exit(1);
+    }
+    sigemptyset(&newAct.sa_mask);
+    sigaddset(&newAct.sa_mask, SIGSEGV);
+    newAct.sa_sigaction = signal_handler;
+    newAct.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
+    if ( sigaction( SIGSEGV, &newAct, NULL ) == -1 ) {
+        fprintf(stderr, "Failed to set my signal handler.\n" );
+        exit(1);
+    }
+#endif
+
     // Set up engine parameters
     GTP::setup_default_parameters();
     parse_commandline(argc, argv);
@@ -550,6 +630,12 @@ int main(int argc, char* argv[]) {
     }
 
     init_global_objects();
+
+    if (cfg_ladder_defense + cfg_ladder_attack) {
+        InitializeConst();
+        InitializeHash();
+        InitializeUctHash();
+    }
 
     auto maingame = std::make_unique<GameState>();
 
@@ -574,6 +660,7 @@ int main(int argc, char* argv[]) {
             GTP::execute(*maingame, input);
         } else {
             // eof or other error
+            myprintf("eof or other error.\n");
             std::cout << std::endl;
             break;
         }

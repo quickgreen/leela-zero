@@ -45,6 +45,9 @@
 #include "UCTNode.h"
 #include "Utils.h"
 
+#include "GoBoard.h"
+#include "Ladder.h"
+
 /*
  * These functions belong to UCTNode but should only be called on the root node
  * of UCTSearch and have been seperated to increase code clarity.
@@ -211,9 +214,12 @@ void UCTNode::prepare_root_node(Network& network, const int color,
     if (had_children) {
         root_eval = get_net_eval(color);
     } else {
+        update(root_eval);
         root_eval = (color == FastBoard::BLACK ? root_eval : 1.0f - root_eval);
     }
+/* skip log
     Utils::myprintf("NN eval=%f\n", root_eval);
+*/
 
     // There are a lot of special cases where code assumes
     // all children of the root are inflated, so do that.
@@ -222,6 +228,41 @@ void UCTNode::prepare_root_node(Network& network, const int color,
     // Remove illegal moves, so the root move list is correct.
     // This also removes a lot of special cases.
     kill_superkos(root_state);
+
+    char ladder[BOARD_MAX] = {0};
+    if ((cfg_ladder_defense || cfg_ladder_attack) && cfg_ladder_check) {
+        game_info_t *game = AllocateGame();
+        InitializeBoard(game);
+        for (int row = 0; row < 19; ++row) {
+            for (int col = 0; col < 19; ++col) {
+                auto vertex = root_state.board.get_vertex(col, row);
+                auto stone = root_state.board.get_state(vertex);
+                if (stone < 2)
+                {
+                    PutStone(game, POS(col + BOARD_START, row + BOARD_START), stone ? S_WHITE : S_BLACK);
+                }
+            }
+        }
+        LadderExtension(game, root_state.board.black_to_move() ? S_BLACK : S_WHITE, ladder);
+        FreeGame(game);
+    }
+    for (auto& child : m_children) {
+        auto move = child->get_move();
+        if (move != FastBoard::PASS) {
+            auto xy = root_state.board.get_xy(move);
+            if (!root_state.is_move_legal(color, move) ||
+                ladder[POS(xy.first + BOARD_START, xy.second + BOARD_START)]) {
+                // Don't delete nodes for now, just mark them invalid.
+                child->invalidate();
+            }
+        }
+    }
+    // Now do the actual deletion.
+    m_children.erase(
+        std::remove_if(begin(m_children), end(m_children),
+                       [](const auto &child) { return !child->valid(); }),
+        end(m_children)
+    );
 
     if (cfg_noise) {
         // Adjust the Dirichlet noise's alpha constant to the board size

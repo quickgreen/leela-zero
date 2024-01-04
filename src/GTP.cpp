@@ -99,6 +99,12 @@ bool cfg_quiet;
 std::string cfg_options_str;
 bool cfg_benchmark;
 bool cfg_cpu_only;
+int cfg_add_interval;
+bool cfg_ladder_check;
+int cfg_ladder_defense;
+int cfg_ladder_attack;
+int cfg_ladder_depth;
+bool cfg_scaling_fpu;
 AnalyzeTags cfg_analyze_tags;
 
 /* Parses tags for the lz-analyze GTP command and friends */
@@ -231,6 +237,10 @@ AnalyzeTags::AnalyzeTags(std::istringstream& cmdstream, const GameState& game) {
             if (cmdstream.fail()) {
                 return;
             }
+            /* For low spec PC */
+            if (cfg_add_interval > 0) {
+                m_interval_centis += cfg_add_interval;
+            }
         } else if (tag == "minmoves") {
             cmdstream >> m_min_moves;
             if (cmdstream.fail()) {
@@ -361,6 +371,12 @@ void GTP::setup_default_parameters() {
     cfg_logfile_handle = nullptr;
     cfg_quiet = false;
     cfg_benchmark = false;
+    cfg_add_interval = 0;
+    cfg_ladder_check = true;
+    cfg_ladder_defense = 3;
+    cfg_ladder_attack = 10;
+    cfg_ladder_depth = 200;
+    cfg_scaling_fpu = false;
 #ifdef USE_CPU_ONLY
     cfg_cpu_only = true;
 #else
@@ -549,6 +565,8 @@ void GTP::execute(GameState& game, const std::string& xinput) {
     } else if (command.find("list_commands") == 0) {
         std::string outtmp(s_commands[0]);
         for (int i = 1; s_commands[i].size() > 0; i++) {
+            /* Stop Sabaki's analysis */
+            if (cfg_add_interval < 0 && s_commands[i] == "lz-genmove_analyze") continue;
             outtmp = outtmp + "\n" + s_commands[i];
         }
         gtp_printf(id, outtmp.c_str());
@@ -1246,8 +1264,10 @@ std::pair<bool, std::string> GTP::set_max_memory(
 
     assert(cache_size_ratio_percent >= 1);
     assert(cache_size_ratio_percent <= 99);
-    auto max_cache_size =
-        max_memory_for_search * cache_size_ratio_percent / 100;
+//    auto max_cache_size =
+//        max_memory_for_search * cache_size_ratio_percent / 100;
+// for 32bit os
+    auto max_cache_size = max_memory_for_search / 100 * cache_size_ratio_percent;
 
     auto max_cache_count =
         (int)(remove_overhead(max_cache_size) / NNCache::ENTRY_SIZE);
